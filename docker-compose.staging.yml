@@ -1,0 +1,77 @@
+services:
+  mongo:
+    image: mongo:8
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${STAGING_MONGO_ROOT_USERNAME:?Set STAGING_MONGO_ROOT_USERNAME in .env.staging}
+      MONGO_INITDB_ROOT_PASSWORD: ${STAGING_MONGO_ROOT_PASSWORD:?Set STAGING_MONGO_ROOT_PASSWORD in .env.staging}
+      MONGO_INITDB_DATABASE: debugdsa_staging
+      MONGO_STAGING_APP_USERNAME: ${STAGING_MONGO_APP_USERNAME:?Set STAGING_MONGO_APP_USERNAME in .env.staging}
+      MONGO_STAGING_APP_PASSWORD: ${STAGING_MONGO_APP_PASSWORD:?Set STAGING_MONGO_APP_PASSWORD in .env.staging}
+    volumes:
+      - staging_mongo_data:/data/db
+      - ./deploy/mongo-init/20-create-staging-app-user.js:/docker-entrypoint-initdb.d/20-create-staging-app-user.js:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --username "$${MONGO_INITDB_ROOT_USERNAME}"
+          --password "$${MONGO_INITDB_ROOT_PASSWORD}"
+          --authenticationDatabase admin --eval "db.adminCommand('ping').ok"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    expose:
+      - "5000"
+    env_file:
+      - ./backend/.env.staging
+    environment:
+      NODE_ENV: production
+      TRUST_PROXY_HOPS: 2
+      MONGO_URI: mongodb://${STAGING_MONGO_APP_USERNAME:?Set STAGING_MONGO_APP_USERNAME in .env.staging}:${STAGING_MONGO_APP_PASSWORD:?Set STAGING_MONGO_APP_PASSWORD in .env.staging}@mongo:27017/debugdsa_staging?authSource=debugdsa_staging
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - staging_codebase_storage:/app/storage-data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_FIREBASE_API_KEY: ${REACT_APP_FIREBASE_API_KEY:-}
+        REACT_APP_FIREBASE_AUTH_DOMAIN: ${REACT_APP_FIREBASE_AUTH_DOMAIN:-}
+        REACT_APP_FIREBASE_PROJECT_ID: ${REACT_APP_FIREBASE_PROJECT_ID:-}
+        REACT_APP_FIREBASE_STORAGE_BUCKET: ${REACT_APP_FIREBASE_STORAGE_BUCKET:-}
+        REACT_APP_FIREBASE_MESSAGING_SENDER_ID: ${REACT_APP_FIREBASE_MESSAGING_SENDER_ID:-}
+        REACT_APP_FIREBASE_APP_ID: ${REACT_APP_FIREBASE_APP_ID:-}
+        REACT_APP_FIREBASE_MEASUREMENT_ID: ${REACT_APP_FIREBASE_MEASUREMENT_ID:-}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3100:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  staging_mongo_data:
+    name: debugdsa_staging_mongo_data
+  staging_codebase_storage:
+    name: debugdsa_staging_codebase_storage

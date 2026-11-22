@@ -1,0 +1,8 @@
+node_modules
+.git
+.env
+config/firebaseServiceAccount.json
+config/firebaseSeriveAccount.json
+storage-data/
+.npm-cache/
+npm-debug.log
